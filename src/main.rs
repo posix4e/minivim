@@ -5,16 +5,18 @@ use crossterm::{
     cursor,
     event::{self, Event},
     execute, queue,
+    style::{Print, PrintStyledContent},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
 mod editor;
 mod plugins;
 
-use editor::{Editor, EventResult, Plugin, RenderContext};
+use editor::{Editor, EventResult, Plugin, RenderContext, StyledSpan};
 use plugins::{
     BufferRenderPlugin, CommandLinePlugin, CommandLineRenderPlugin, CursorRenderPlugin,
     FileCommandPlugin, InsertPlugin, ModePlugin, MotionPlugin, StatusBarPlugin,
+    SyntaxHighlightPlugin,
 };
 
 struct TerminalGuard;
@@ -47,6 +49,7 @@ fn main() -> io::Result<()> {
         Box::new(MotionPlugin),
         Box::new(InsertPlugin),
         Box::new(BufferRenderPlugin),
+        Box::new(SyntaxHighlightPlugin::new()),
         Box::new(StatusBarPlugin),
         Box::new(CommandLineRenderPlugin),
         Box::new(CursorRenderPlugin),
@@ -102,15 +105,8 @@ fn render(editor: &Editor, plugins: &mut [Box<dyn Plugin>]) -> io::Result<()> {
             cursor::MoveTo(0, row as u16),
             Clear(ClearType::CurrentLine)
         )?;
-        let mut rendered = line.clone();
-        let width = ctx.width as usize;
-        let line_len = rendered.chars().count();
-        if width > line_len {
-            rendered.push_str(&" ".repeat(width - line_len));
-        } else if width > 0 && line_len > width {
-            rendered = rendered.chars().take(width).collect();
-        }
-        queue!(stdout, crossterm::style::Print(rendered))?;
+        let spans = ctx.spans.get(row).map(Vec::as_slice).unwrap_or(&[]);
+        render_line(&mut stdout, line, spans, ctx.width as usize)?;
     }
 
     if let Some((row, col)) = ctx.cursor {
@@ -120,4 +116,61 @@ fn render(editor: &Editor, plugins: &mut [Box<dyn Plugin>]) -> io::Result<()> {
     }
 
     stdout.flush()
+}
+
+fn render_line(
+    stdout: &mut impl Write,
+    line: &str,
+    spans: &[StyledSpan],
+    width: usize,
+) -> io::Result<()> {
+    let mut line_chars: Vec<char> = line.chars().collect();
+    if width == 0 {
+        return Ok(());
+    }
+    if line_chars.len() > width {
+        line_chars.truncate(width);
+    }
+
+    if spans.is_empty() {
+        let rendered: String = line_chars.iter().collect();
+        queue!(stdout, Print(rendered))?;
+        let padding = width.saturating_sub(line_chars.len());
+        if padding > 0 {
+            queue!(stdout, Print(" ".repeat(padding)))?;
+        }
+        return Ok(());
+    }
+
+    let mut spans_sorted = spans.to_vec();
+    spans_sorted.sort_by_key(|span| span.start);
+    let mut cursor = 0usize;
+    let line_len = line_chars.len();
+
+    for span in spans_sorted {
+        let span_start = span.start.min(width).min(line_len);
+        if span_start > cursor {
+            let segment: String = line_chars[cursor..span_start].iter().collect();
+            queue!(stdout, Print(segment))?;
+        }
+
+        let span_end = span.start.saturating_add(span.len).min(width).min(line_len);
+        if span_end > span_start {
+            let segment: String = line_chars[span_start..span_end].iter().collect();
+            queue!(stdout, PrintStyledContent(span.style.apply(segment)))?;
+        }
+        cursor = span_end;
+    }
+
+    if cursor < line_len {
+        let segment: String = line_chars[cursor..line_len].iter().collect();
+        queue!(stdout, Print(segment))?;
+    }
+
+    let padding = width.saturating_sub(line_len);
+    if padding > 0 {
+        queue!(stdout, Print(" ".repeat(padding)))?;
+    }
+
+    Ok(())
 }

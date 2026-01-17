@@ -2,8 +2,13 @@ use std::io;
 use std::path::PathBuf;
 
 use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::style::{Attribute, Attributes, Color, ContentStyle};
 
-use crate::editor::{Editor, EventResult, Mode, Plugin, RenderContext};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Color as SyntectColor, FontStyle, Style, Theme, ThemeSet};
+use syntect::parsing::{SyntaxReference, SyntaxSet};
+
+use crate::editor::{Editor, EventResult, Mode, Plugin, RenderContext, StyledSpan};
 
 pub struct FileCommandPlugin;
 
@@ -292,6 +297,189 @@ impl Plugin for BufferRenderPlugin {
             } else {
                 ctx.set_line(row, "~".to_string());
             }
+        }
+    }
+}
+
+pub struct SyntaxHighlightPlugin {
+    syntax_set: SyntaxSet,
+    theme: Theme,
+    cached_spans: Vec<Vec<StyledSpan>>,
+    last_revision: u64,
+    last_path: Option<PathBuf>,
+}
+
+impl SyntaxHighlightPlugin {
+    pub fn new() -> Self {
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let theme_set = ThemeSet::load_defaults();
+        let theme = theme_set
+            .themes
+            .get("base16-ocean.dark")
+            .cloned()
+            .or_else(|| theme_set.themes.values().next().cloned())
+            .expect("syntect themes are missing");
+
+        Self {
+            syntax_set,
+            theme,
+            cached_spans: Vec::new(),
+            last_revision: u64::MAX,
+            last_path: None,
+        }
+    }
+
+    fn needs_rehighlight(&self, editor: &Editor) -> bool {
+        editor.revision != self.last_revision
+            || editor.file_path != self.last_path
+            || editor.buffer.lines.len() != self.cached_spans.len()
+    }
+
+    fn syntax_for_editor(&self, editor: &Editor) -> &SyntaxReference {
+        if let Some(path) = editor.file_path.as_ref() {
+            if let Ok(Some(syntax)) = self.syntax_set.find_syntax_for_file(path) {
+                return syntax;
+            }
+        }
+        self.syntax_set.find_syntax_plain_text()
+    }
+
+    fn rehighlight(&mut self, editor: &Editor) {
+        let syntax = self.syntax_for_editor(editor);
+        let mut highlighter = HighlightLines::new(syntax, &self.theme);
+        let mut spans = Vec::with_capacity(editor.buffer.lines.len());
+
+        for (idx, line) in editor.buffer.lines.iter().enumerate() {
+            let mut owned = line.clone();
+            if idx + 1 < editor.buffer.lines.len() {
+                owned.push('\n');
+            }
+            let ranges = match highlighter.highlight_line(&owned, &self.syntax_set) {
+                Ok(ranges) => ranges,
+                Err(_) => Vec::new(),
+            };
+            let line_spans = Self::spans_from_ranges(&ranges);
+            spans.push(line_spans);
+        }
+
+        self.cached_spans = spans;
+        self.last_revision = editor.revision;
+        self.last_path = editor.file_path.clone();
+    }
+
+    fn spans_from_ranges(ranges: &[(Style, &str)]) -> Vec<StyledSpan> {
+        let mut spans: Vec<StyledSpan> = Vec::new();
+        let mut col = 0usize;
+
+        for (style, text) in ranges {
+            let mut len = 0usize;
+            for ch in text.chars() {
+                if ch == '\n' || ch == '\r' {
+                    break;
+                }
+                len += 1;
+            }
+            if len == 0 {
+                continue;
+            }
+
+            let content_style = Self::map_style(*style);
+            if let Some(last) = spans.last_mut() {
+                if last.style == content_style && last.start + last.len == col {
+                    last.len += len;
+                    col += len;
+                    continue;
+                }
+            }
+
+            spans.push(StyledSpan {
+                start: col,
+                len,
+                style: content_style,
+            });
+            col += len;
+        }
+
+        spans
+    }
+
+    fn map_style(style: Style) -> ContentStyle {
+        let mut content = ContentStyle::new();
+        content.foreground_color = Self::map_color(style.foreground);
+        content.background_color = Self::map_color(style.background);
+        let mut attrs = Attributes::default();
+        if style.font_style.contains(FontStyle::BOLD) {
+            attrs.set(Attribute::Bold);
+        }
+        if style.font_style.contains(FontStyle::ITALIC) {
+            attrs.set(Attribute::Italic);
+        }
+        if style.font_style.contains(FontStyle::UNDERLINE) {
+            attrs.set(Attribute::Underlined);
+        }
+        content.attributes = attrs;
+        content
+    }
+
+    fn map_color(color: SyntectColor) -> Option<Color> {
+        if color.a == 0 {
+            None
+        } else {
+            Some(Color::Rgb {
+                r: color.r,
+                g: color.g,
+                b: color.b,
+            })
+        }
+    }
+
+    fn slice_spans(spans: &[StyledSpan], col_offset: usize, width: usize) -> Vec<StyledSpan> {
+        if width == 0 {
+            return Vec::new();
+        }
+        let end = col_offset.saturating_add(width);
+        let mut visible = Vec::new();
+        for span in spans {
+            let span_start = span.start;
+            let span_end = span.start + span.len;
+            if span_end <= col_offset || span_start >= end {
+                continue;
+            }
+            let start = span_start.max(col_offset) - col_offset;
+            let end = span_end.min(end) - col_offset;
+            let len = end.saturating_sub(start);
+            if len == 0 {
+                continue;
+            }
+            visible.push(StyledSpan {
+                start,
+                len,
+                style: span.style,
+            });
+        }
+        visible
+    }
+}
+
+impl Plugin for SyntaxHighlightPlugin {
+    fn on_render(&mut self, editor: &Editor, ctx: &mut RenderContext) {
+        if self.needs_rehighlight(editor) {
+            self.rehighlight(editor);
+        }
+
+        let width = ctx.width as usize;
+        let content_height = editor.content_height();
+        for row in 0..content_height {
+            let buffer_row = editor.viewport.row_offset + row as usize;
+            if buffer_row >= self.cached_spans.len() {
+                continue;
+            }
+            let spans = Self::slice_spans(
+                &self.cached_spans[buffer_row],
+                editor.viewport.col_offset,
+                width,
+            );
+            ctx.set_spans(row, spans);
         }
     }
 }

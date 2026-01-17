@@ -42,4 +42,5 @@ Command mode:
 ## Plugins
 
 Core structures live in `src/editor.rs`. Basic behavior is provided by plugins in
-`src/plugins.rs` (modes, motion, editing, commands, rendering).
+`src/plugins.rs` (modes, motion, editing, commands, rendering, syntect-based
+syntax highlighting).

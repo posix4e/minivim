@@ -3,6 +3,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crossterm::event::Event;
+use crossterm::style::ContentStyle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -74,6 +75,7 @@ pub struct Editor {
     pub file_path: Option<PathBuf>,
     pub should_quit: bool,
     pub dirty: bool,
+    pub revision: u64,
     pub screen_width: u16,
     pub screen_height: u16,
     command_queue: Vec<String>,
@@ -94,6 +96,7 @@ impl Editor {
             file_path,
             should_quit: false,
             dirty: false,
+            revision: 0,
             screen_width,
             screen_height,
             command_queue: Vec::new(),
@@ -144,6 +147,7 @@ impl Editor {
             col_offset: 0,
         };
         self.dirty = false;
+        self.revision = 0;
         Ok(())
     }
 
@@ -242,6 +246,7 @@ impl Editor {
         line.insert(byte_idx, ch);
         self.cursor.col += 1;
         self.dirty = true;
+        self.bump_revision();
         self.ensure_cursor_visible();
     }
 
@@ -256,6 +261,7 @@ impl Editor {
         self.cursor.row += 1;
         self.cursor.col = 0;
         self.dirty = true;
+        self.bump_revision();
         self.ensure_cursor_visible();
     }
 
@@ -270,6 +276,7 @@ impl Editor {
             line.remove(byte_idx);
             self.cursor.col -= 1;
             self.dirty = true;
+            self.bump_revision();
         } else if self.cursor.row > 0 {
             let current = self.buffer.lines.remove(self.cursor.row);
             self.cursor.row -= 1;
@@ -278,6 +285,7 @@ impl Editor {
             line.push_str(&current);
             self.cursor.col = prev_len;
             self.dirty = true;
+            self.bump_revision();
         }
         self.ensure_cursor_visible();
     }
@@ -292,11 +300,13 @@ impl Editor {
             let byte_idx = Self::char_to_byte_index(line, self.cursor.col);
             line.remove(byte_idx);
             self.dirty = true;
+            self.bump_revision();
         } else if self.cursor.row + 1 < self.buffer.lines.len() {
             let next = self.buffer.lines.remove(self.cursor.row + 1);
             let line = &mut self.buffer.lines[self.cursor.row];
             line.push_str(&next);
             self.dirty = true;
+            self.bump_revision();
         }
         self.ensure_cursor_visible();
     }
@@ -309,6 +319,10 @@ impl Editor {
             .nth(char_index)
             .map(|(idx, _)| idx)
             .unwrap_or_else(|| line.len())
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 
@@ -336,6 +350,7 @@ pub struct RenderContext {
     pub width: u16,
     pub height: u16,
     pub lines: Vec<String>,
+    pub spans: Vec<Vec<StyledSpan>>,
     pub cursor: Option<(u16, u16)>,
 }
 
@@ -345,6 +360,7 @@ impl RenderContext {
             width,
             height,
             lines: vec![String::new(); height as usize],
+            spans: vec![Vec::new(); height as usize],
             cursor: None,
         }
     }
@@ -363,7 +379,22 @@ impl RenderContext {
         self.lines[row_index] = line;
     }
 
+    pub fn set_spans(&mut self, row: u16, spans: Vec<StyledSpan>) {
+        let row_index = row as usize;
+        if row_index >= self.spans.len() {
+            return;
+        }
+        self.spans[row_index] = spans;
+    }
+
     pub fn set_cursor(&mut self, row: u16, col: u16) {
         self.cursor = Some((row, col));
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StyledSpan {
+    pub start: usize,
+    pub len: usize,
+    pub style: ContentStyle,
 }

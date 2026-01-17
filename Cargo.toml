@@ -5,3 +5,12 @@ edition = "2024"
 
 [dependencies]
 crossterm = "0.27"
+syntect = "5.1"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+tempfile = "3.10"
+
+[target.'cfg(unix)'.dev-dependencies]
+expectrl = "0.7"
+vt100 = "0.15"

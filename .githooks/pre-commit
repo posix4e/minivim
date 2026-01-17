@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+echo "Running cargo clippy..."
+cargo clippy --all-targets -- -D warnings

@@ -44,3 +44,8 @@ Command mode:
 Core structures live in `src/editor.rs`. Basic behavior is provided by plugins in
 `src/plugins.rs` (modes, motion, editing, commands, rendering, syntect-based
 syntax highlighting).
+
+## Development
+
+- Enable the pre-commit hook: `./scripts/install-hooks.sh`
+- Hook runs: `cargo clippy --all-targets -- -D warnings`

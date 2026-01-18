@@ -18,30 +18,58 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x86_64
+            triple: x86_64-unknown-linux-gnu
             bin: minivim
-          - os: macos-latest
+            use_cross: false
+          - os: ubuntu-latest
+            target: linux-aarch64
+            triple: aarch64-unknown-linux-gnu
+            bin: minivim
+            use_cross: true
+          - os: macos-13
+            target: macos-x86_64
+            triple: x86_64-apple-darwin
+            bin: minivim
+            use_cross: false
+          - os: macos-14
             target: macos-aarch64
+            triple: aarch64-apple-darwin
             bin: minivim
+            use_cross: false
           - os: windows-latest
             target: windows-x86_64
+            triple: x86_64-pc-windows-msvc
             bin: minivim.exe
+            use_cross: false
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --locked
+      - name: Build (release)
+        shell: bash
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.triple }}
+          else
+            cargo build --release --target ${{ matrix.triple }}
+          fi
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp target/release/${{ matrix.bin }} dist/
+          cp target/${{ matrix.triple }}/release/${{ matrix.bin }} dist/
           tar -czf minivim-${{ matrix.target }}.tar.gz -C dist ${{ matrix.bin }}
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/${{ matrix.bin }} dist/
+          Copy-Item target/${{ matrix.triple }}/release/${{ matrix.bin }} dist/
           Compress-Archive -Path dist/${{ matrix.bin }} -DestinationPath minivim-${{ matrix.target }}.zip
       - uses: actions/upload-artifact@v4
         with:

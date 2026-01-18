@@ -26,11 +26,6 @@ jobs:
             triple: aarch64-unknown-linux-gnu
             bin: minivim
             use_cross: true
-          - os: macos-15-intel
-            target: macos-x86_64
-            triple: x86_64-apple-darwin
-            bin: minivim
-            use_cross: false
           - os: macos-latest
             target: macos-aarch64
             triple: aarch64-apple-darwin

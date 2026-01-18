@@ -4,8 +4,8 @@ use expectrl::{Eof, Session};
 use std::io;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
 use std::time::{Duration, Instant};
-use std::{thread};
 use tempfile::tempdir;
 use vt100::Parser;
 

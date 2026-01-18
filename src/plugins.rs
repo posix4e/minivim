@@ -1,3 +1,5 @@
+//! Core plugins that implement minivim behaviors.
+
 use std::io;
 use std::path::PathBuf;
 
@@ -577,4 +579,28 @@ fn format_status_line(left: &str, right: &str, width: usize) -> String {
     let left_trimmed: String = left.chars().take(available_left).collect();
     let padding = width.saturating_sub(left_trimmed.chars().count() + right_len);
     format!("{}{}{}", left_trimmed, " ".repeat(padding), right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slice_line_respects_offset_and_width() {
+        let line = "abcdef";
+        let slice = slice_line(line, 2, 3);
+        assert_eq!(slice, "cde");
+    }
+
+    #[test]
+    fn format_status_line_pads_between() {
+        let line = format_status_line("LEFT", "RIGHT", 10);
+        assert_eq!(line, "LEFT RIGHT");
+    }
+
+    #[test]
+    fn format_status_line_truncates_right() {
+        let line = format_status_line("LEFT", "TOO_LONG", 4);
+        assert_eq!(line, "TOO_");
+    }
 }

@@ -49,3 +49,12 @@ syntax highlighting).
 
 - Enable the pre-commit hook: `./scripts/install-hooks.sh`
 - Hook runs: `cargo clippy --all-targets -- -D warnings`
+
+## Tests
+
+- Run all tests: `cargo test`
+- E2E tests run on Unix only (PTY-based).
+
+## Documentation
+
+- Build local docs: `cargo doc --no-deps`

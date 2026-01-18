@@ -1,3 +1,5 @@
+//! Core editor state and rendering types for minivim.
+
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -5,6 +7,7 @@ use std::path::PathBuf;
 use crossterm::event::Event;
 use crossterm::style::ContentStyle;
 
+/// Editor mode for key handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -12,18 +15,21 @@ pub enum Mode {
     Command,
 }
 
+/// Cursor position in the buffer (0-based).
 #[derive(Debug, Clone, Copy)]
 pub struct Cursor {
     pub row: usize,
     pub col: usize,
 }
 
+/// Viewport offsets into the buffer for rendering.
 #[derive(Debug, Clone, Copy)]
 pub struct Viewport {
     pub row_offset: usize,
     pub col_offset: usize,
 }
 
+/// In-memory text buffer stored as lines.
 #[derive(Debug, Clone)]
 pub struct Buffer {
     pub lines: Vec<String>,
@@ -49,6 +55,7 @@ impl Buffer {
     }
 }
 
+/// State for ex-style command input.
 #[derive(Debug, Clone)]
 pub struct CommandLine {
     pub active: bool,
@@ -64,6 +71,7 @@ impl CommandLine {
     }
 }
 
+/// Shared editor state used by plugins.
 #[derive(Debug)]
 pub struct Editor {
     pub buffer: Buffer,
@@ -326,12 +334,14 @@ impl Editor {
     }
 }
 
+/// Result of handling an input event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventResult {
     Consumed,
     Ignored,
 }
 
+/// Plugin interface for extending editor behavior.
 pub trait Plugin {
     fn on_init(&mut self, _editor: &mut Editor) {}
 
@@ -346,6 +356,7 @@ pub trait Plugin {
     fn on_render(&mut self, _editor: &Editor, _ctx: &mut RenderContext) {}
 }
 
+/// Render buffer used by plugins to draw UI content.
 pub struct RenderContext {
     pub width: u16,
     pub height: u16,
@@ -392,9 +403,82 @@ impl RenderContext {
     }
 }
 
+/// Styled span in a rendered line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StyledSpan {
     pub start: usize,
     pub len: usize,
     pub style: ContentStyle,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffer_from_string_preserves_trailing_line() {
+        let buffer = Buffer::from_string("a\nb\n".to_string());
+        assert_eq!(buffer.lines, vec!["a", "b", ""]);
+    }
+
+    #[test]
+    fn insert_newline_splits_line() {
+        let mut editor = Editor::new(80, 24, None);
+        editor.buffer.lines = vec!["hello".to_string()];
+        editor.cursor.row = 0;
+        editor.cursor.col = 2;
+        editor.insert_newline();
+        assert_eq!(editor.buffer.lines, vec!["he", "llo"]);
+        assert_eq!(editor.cursor.row, 1);
+        assert_eq!(editor.cursor.col, 0);
+    }
+
+    #[test]
+    fn backspace_merges_lines_at_start() {
+        let mut editor = Editor::new(80, 24, None);
+        editor.buffer.lines = vec!["hi".to_string(), "there".to_string()];
+        editor.cursor.row = 1;
+        editor.cursor.col = 0;
+        editor.backspace();
+        assert_eq!(editor.buffer.lines, vec!["hithere"]);
+        assert_eq!(editor.cursor.row, 0);
+        assert_eq!(editor.cursor.col, 2);
+    }
+
+    #[test]
+    fn delete_char_merges_lines_at_end() {
+        let mut editor = Editor::new(80, 24, None);
+        editor.buffer.lines = vec!["hi".to_string(), "there".to_string()];
+        editor.cursor.row = 0;
+        editor.cursor.col = 2;
+        editor.delete_char();
+        assert_eq!(editor.buffer.lines, vec!["hithere"]);
+        assert_eq!(editor.cursor.row, 0);
+        assert_eq!(editor.cursor.col, 2);
+    }
+
+    #[test]
+    fn revision_increments_on_edits() {
+        let mut editor = Editor::new(80, 24, None);
+        assert_eq!(editor.revision, 0);
+        editor.insert_char('a');
+        let after_insert = editor.revision;
+        editor.insert_newline();
+        let after_newline = editor.revision;
+        editor.backspace();
+        let after_backspace = editor.revision;
+        assert!(after_insert > 0);
+        assert!(after_newline > after_insert);
+        assert!(after_backspace > after_newline);
+    }
+
+    #[test]
+    fn clamp_cursor_trims_column() {
+        let mut editor = Editor::new(80, 24, None);
+        editor.buffer.lines = vec!["hi".to_string()];
+        editor.cursor.row = 0;
+        editor.cursor.col = 10;
+        editor.clamp_cursor();
+        assert_eq!(editor.cursor.col, 2);
+    }
 }
